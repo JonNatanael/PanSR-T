@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# PanSR / TG-PanSR training environment (Linux x86_64, CUDA 12.x host toolkit)
+#
+# Mirrors the verified working setup (setup.sh / README "Manual installation"):
+# Python 3.10 + PyTorch 2.4.1 (cu124) + all wheel-based dependencies,
+# pinned to the versions known to work together.
+#
+# Host prerequisites (NOT installable from this file):
+#   * CUDA 12.x toolkit (nvcc) and gcc on PATH
+#   * an NVIDIA GPU visible at build time (or set TORCH_CUDA_ARCH_LIST,
+#     e.g. export TORCH_CUDA_ARCH_LIST=8.6 for Ampere)
+#
+# Usage (from the repo root, i.e. the directory containing this file):
+#
+#   conda env create -f environment.yml
+#   conda activate pansr
+#   bash setup.sh
+#
+# The YAML cannot express the two source builds, which setup.sh then
+# completes (idempotently). Equivalently, run the three steps by hand:
+#
+#   pip install --no-build-isolation 'git+https://github.com/facebookresearch/detectron2.git'
+#       # detectron2 0.6 built against the installed torch 2.4.1; also pulls
+#       # fvcore, omegaconf, pycocotools, matplotlib, ...
+#   pip install -e .
+#   export FORCE_CUDA=1
+#   ( cd pansr/modeling/pixel_decoder/ops && python setup.py build install )
+#
+# Verify (import torch first — the CUDA op links against torch's libc10.so):
+#
+#   python -c "import torch, detectron2, MultiScaleDeformableAttention, pansr; print('PanSR OK')"
+#
+# Then point at the dataset before training/eval:
+#
+#   export LARS_ROOT=/path/to/LaRS
+# ---------------------------------------------------------------------------
+name: pansr
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10          # must be 3.10 (matches the reference environment)
+  - pip
+  - ninja                # build helper for the CUDA compiles
+  - cython
+  - setuptools
+  - wheel
+  - pip:
+      # PyTorch (CUDA 12.4). The extra index provides the +cu124 builds;
+      # everything else still resolves from PyPI.
+      - --extra-index-url https://download.pytorch.org/whl/cu124
+      - torch==2.4.1
+      - torchvision==0.19.1
+      # Core scientific / vision deps (see requirements.txt), pinned to the
+      # versions of the verified working environment.
+      - numpy==2.2.6
+      - scipy==1.15.3
+      - shapely==2.1.2
+      - timm==1.0.28
+      - opencv-python==5.0.0.93
+      - Pillow==12.2.0
+      # COCO/LaRS evaluation (detectron2 also declares it, pin for parity)
+      - pycocotools==2.0.11
+      # Panoptic encoding/decoding utilities used by the LaRS mapper and predict.py
+      - panopticapi @ git+https://github.com/cocodataset/panopticapi.git
+      # HuggingFace Hub integration (checkpoint download, pansr/hub.py)
+      - huggingface_hub==1.25.1
+      - safetensors==0.8.0
