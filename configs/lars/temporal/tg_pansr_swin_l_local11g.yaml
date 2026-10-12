@@ -1,0 +1,46 @@
+# TG-PanSR Swin-L - resource-reduced variant for the 11 GB RTX 2080 Ti
+# (sm75) workstation.  The reference protocol (IMAGE_SIZE 1024,
+# PIXEL_BUDGET 255000, T=10 all_history) needs bf16/flash-attention
+# hardware and >=~24 GB VRAM; this config validates the same code paths
+# end-to-end at reduced resources.
+#
+# The numbers below are the MEASURED largest train-step configuration
+# that fits 10.57 GiB (USE_CHECKPOINT on, AdamW state live, worst-case
+# LSJ crop included - the LSJ scale range [0.5, 2.0] makes the Swin
+# input size vary per iteration, so the fit must be measured over many
+# steps, not one):
+#   * Swin input 448x448; geometry budget 28224 -> 168x168 raster
+#     (12x12 = 144 tokens/frame)
+#   * T=8 "recent" sampling (the same geometry recipe as the overfit
+#     probe; train-step peak 10.02 GiB over 300 iterations)
+# Measured OOMs at 448x448 that rule out anything larger on this GPU:
+#   T=10 all_history at budget 28224 / 25000 / 20000 / 50000 (all ~+0.2
+#   GiB over the limit, OOM in the mask point-sampler), 448/T=8 with
+#   budget 50000, and 480-768 at any tested budget.  Keep T=10
+#   all_history for the reference config; the T/budget reduction here is
+#   a memory deviation, documented in docs/experiment_protocol.md.
+# Pi3 runs in fp32 (no bf16 SDPA backend on sm75).  Do NOT use this
+# config for reported reference results; it is for smoke tests,
+# save/resume and runtime/memory measurement on the workstation.
+_BASE_: Base-TG.yaml
+
+INPUT:
+  IMAGE_SIZE: 448
+
+MODEL:
+  SWIN:
+    # Workstation memory: recompute Swin blocks instead of keeping their
+    # backward graph (vanilla configs keep the default False).
+    USE_CHECKPOINT: True
+
+TEMPORAL:
+  NUM_FRAMES: 8
+  SAMPLING: "recent"
+  GEOMETRY:
+    PIXEL_BUDGET: 28224
+  OPTIM:
+    # workstation: the d2 0.6 final-eval (full val set at original
+    # resolution) is not runnable on 11 GB; run it via export_lars.py
+    RUN_FINAL_EVAL: False
+
+OUTPUT_DIR: "output/tg_pansr/local11g/t8_recent"

@@ -1,0 +1,6 @@
+# G5 - five genuine causal frames (4 context + target).
+_BASE_: Base-TG.yaml
+TEMPORAL:
+  NUM_FRAMES: 5
+  SAMPLING: "recent"
+OUTPUT_DIR: "output/tg_pansr/geo/swin_l_t5_recent"

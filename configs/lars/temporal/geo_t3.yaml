@@ -1,0 +1,6 @@
+# G3 - three genuine causal frames (2 context + target).
+_BASE_: Base-TG.yaml
+TEMPORAL:
+  NUM_FRAMES: 3
+  SAMPLING: "recent"
+OUTPUT_DIR: "output/tg_pansr/geo/swin_l_t3_recent"

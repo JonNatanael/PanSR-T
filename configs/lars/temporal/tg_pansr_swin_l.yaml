@@ -1,0 +1,4 @@
+# G10 - main proposed model: all verified frames (T=10), online shared-view
+# geometry, GMOS-style bottleneck fusion + residual pyramid injection.
+_BASE_: Base-TG.yaml
+OUTPUT_DIR: "output/tg_pansr/swin_l_t10_online"

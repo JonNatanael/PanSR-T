@@ -1,0 +1,7 @@
+# GS - G10 with fusion only at res3-res5 (no res2 injection).  Tests
+# whether high-resolution res2 injection helps or hurts small objects.
+_BASE_: Base-TG.yaml
+TEMPORAL:
+  FUSION:
+    INJECT_FEATURES: ["res3", "res4", "res5"]
+OUTPUT_DIR: "output/tg_pansr/controls/swin_l_gs_no_res2"

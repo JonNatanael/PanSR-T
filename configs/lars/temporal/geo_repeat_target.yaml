@@ -1,0 +1,7 @@
+# GR - repeated-target negative control: the target repeated to T=10.
+# Same clip length and compute as G10 but no new views are supplied.
+_BASE_: Base-TG.yaml
+TEMPORAL:
+  NUM_FRAMES: 10
+  SAMPLING: "repeat_target"
+OUTPUT_DIR: "output/tg_pansr/controls/swin_l_gr_repeat_target"

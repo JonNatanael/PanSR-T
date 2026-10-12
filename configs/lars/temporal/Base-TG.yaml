@@ -1,0 +1,82 @@
+# Base config for TG-PanSR (temporal-geometric) Swin-L runs on LaRS.
+# Derived from the original Swin-L config; the PanSR checkpoint is shared
+# by all matched runs (set MODEL.WEIGHTS explicitly, e.g. via CLI or a
+# local override file).
+_BASE_: ../panoptic/pansr_Swin_L.yaml
+
+MODEL:
+  META_ARCHITECTURE: "TemporalPanSR"
+  WEIGHTS: ""   # same PanSR checkpoint for all matched runs
+
+DATASETS:
+  TRAIN: ("lars_train_temporal_panoptic",)
+  TEST: ("lars_val_temporal_panoptic",)
+
+INPUT:
+  DATASET_MAPPER_NAME: "lars_temporal_panoptic"
+  # Copy-paste is disabled for the temporal model and its matched
+  # fine-tuning controls (see brief section 5.1).
+  COPY_PASTE:
+    ENABLED: False
+
+TEMPORAL:
+  ENABLED: True
+  MANIFEST_TRAIN: ""
+  MANIFEST_VAL: ""
+  NUM_FRAMES: 10
+  SAMPLING: "all_history"
+  TARGET_POLICY: "explicit"
+  ALLOW_FUTURE: False
+  MISSING_POLICY: "error"
+  FRAME_DROPOUT: 0.0
+  SAMPLING_SEED: 0
+  PREPROCESS_MODE: "shared_view_online"
+  GEOMETRY:
+    BACKEND: "pi3_gmos"
+    CHECKPOINT: ""
+    FROZEN: True
+    FEATURE_MODE: "last_decoder"
+    FEATURE_WIDTH: 1024
+    PIXEL_BUDGET: 255000
+    # bf16 is used where the SDPA backend supports it (sm80+); on this
+    # workstation (RTX 2080 Ti / sm75) the encoder falls back to fp32.
+    DTYPE: "bf16"
+    CACHE_MODE: "none"
+    CACHE_DIR: ""
+  FUSION:
+    MODE: "gmos_bottleneck_residual"
+    APPEARANCE_SOURCE: "res4"
+    DIM: 256
+    REFINE_LAYERS: 3
+    NUM_HEADS: 8
+    FFN_DIM: 2048
+    DROPOUT: 0.1
+    POSITION_ENCODING: "normalized_2d_sincos"
+    INJECT_FEATURES: ["res2", "res3", "res4", "res5"]
+    INJECT_DIM: 64
+    RESIDUAL_INIT: "zero_output"
+    LEARNED_GATE: True
+    ZERO_GEOMETRY: False
+  OPTIM:
+    NEW_MODULE_LR: 0.0001
+    ACCUMULATION_STEPS: 8
+    EXPECTED_EFFECTIVE_BATCH: 8
+
+SOLVER:
+  # Detectron2 global MICRO-batch (1 rank in the reference setting).
+  IMS_PER_BATCH: 1
+  BASE_LR: 0.00001           # existing non-backbone PanSR modules
+  BACKBONE_MULTIPLIER: 0.1   # Swin lr = 1e-6
+  MAX_ITER: 10000             # optimizer updates (incl. accumulation)
+  LR_SCHEDULER_NAME: "WarmupMultiStepLR"
+  STEPS: (8000, 9000)
+  WARMUP_FACTOR: 0.1
+  WARMUP_ITERS: 500
+  CHECKPOINT_PERIOD: 1000
+  AMP:
+    ENABLED: True
+
+TEST:
+  EVAL_PERIOD: 1000
+
+OUTPUT_DIR: "output/tg_pansr/swin_l_t10_online"

@@ -1,0 +1,8 @@
+# GF - G10 with project/concat/merge but NO spatial-transformer
+# refinement.  Tests whether GMOS-style spatial refinement helps beyond
+# simple feature fusion.
+_BASE_: Base-TG.yaml
+TEMPORAL:
+  FUSION:
+    MODE: "concat_only"
+OUTPUT_DIR: "output/tg_pansr/controls/swin_l_gf_concat_only"

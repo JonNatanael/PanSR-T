@@ -1,0 +1,31 @@
+# TG-PanSR - overfit-probe config (tools/temporal/overfit_probe.py).
+# Extra-quick settings that fit the 11 GB (10.57 GiB usable) workstation
+# including the AdamW optimizer state (~2 GB):
+#   * 448x448 Swin input (with MODEL.SWIN.USE_CHECKPOINT from
+#     local11g the backbone graph is recomputed, so 448 fits once the
+#     optimizer moments are allocated)
+#   * 28224-pixel geometry budget -> 168x168 raster (12x12 tokens/frame)
+#   * SAMPLING recent + NUM_FRAMES 8 (7 most-recent context frames
+#     + target; all_history would keep T=10 and overshoot the budget)
+# no accumulation (effective batch = micro batch of probe clips).
+_BASE_: tg_pansr_swin_l_local11g.yaml
+
+INPUT:
+  IMAGE_SIZE: 448
+
+TEMPORAL:
+  SAMPLING: "recent"
+  NUM_FRAMES: 8
+  GEOMETRY:
+    PIXEL_BUDGET: 28224
+  OPTIM:
+    ACCUMULATION_STEPS: 1
+    EXPECTED_EFFECTIVE_BATCH: 1
+
+SOLVER:
+  BASE_LR: 0.0001
+  MAX_ITER: 40
+  STEPS: (30, 35)
+  WARMUP_ITERS: 5
+
+OUTPUT_DIR: "output/tg_pansr/overfit_probe"

@@ -1,0 +1,7 @@
+# G10 (alias) - all verified frames, target last.  Identical to
+# tg_pansr_swin_l.yaml (all_history with NUM_FRAMES=10).
+_BASE_: Base-TG.yaml
+TEMPORAL:
+  NUM_FRAMES: 10
+  SAMPLING: "all_history"
+OUTPUT_DIR: "output/tg_pansr/geo/swin_l_t10_all_history"

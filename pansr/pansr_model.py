@@ -238,6 +238,22 @@ class PanSR(nn.Module):
     def device(self):
         return self.pixel_mean.device
 
+    def extract_backbone_features(self, images, batched_inputs):
+        """Extract the appearance backbone features for the target frame.
+
+        This is the single overridable integration point for the temporal
+        extension: ``TemporalPanSR`` overrides it to add frozen geometric
+        features and residual pyramid adaptation.  The vanilla model runs
+        exactly the original path (``self.backbone(images.tensor)``).
+
+        Args:
+            images: an :class:`detectron2.structures.ImageList` of the
+                (normalized) target frames.
+            batched_inputs: the mapper outputs for this batch (list of
+                dicts); the vanilla model does not use it.
+        """
+        return self.backbone(images.tensor)
+
     def forward(self, batched_inputs):
         """
         Args:
@@ -268,7 +284,7 @@ class PanSR(nn.Module):
         images = [(x - self.pixel_mean) / self.pixel_std for x in images]
         images = ImageList.from_tensors(images, self.size_divisibility)
 
-        features = self.backbone(images.tensor)
+        features = self.extract_backbone_features(images, batched_inputs)
 
         if self.training:
             # dn_args={"scalar":30,"noise_scale":0.4}

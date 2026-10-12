@@ -1,0 +1,30 @@
+# B1 - matched continuation baseline: the SAME original PanSR model and
+# the exact matched fine-tuning protocol (same schedule, copy-paste
+# disabled, same data) WITHOUT the temporal branch.
+# TEMPORAL.ENABLED=False -> no manifest or geometry checkpoint required;
+# the vanilla feature path runs, the original mapper is used.
+_BASE_: ../panoptic/pansr_Swin_L.yaml
+MODEL:
+  WEIGHTS: ""   # same PanSR checkpoint as all matched runs
+INPUT:
+  COPY_PASTE:
+    ENABLED: False
+DATASETS:
+  TRAIN: ("lars_train_panoptic",)
+  TEST: ("lars_val_panoptic",)
+SOLVER:
+  # matched fine-tuning schedule (identical to the temporal runs)
+  IMS_PER_BATCH: 8
+  BASE_LR: 0.00001
+  BACKBONE_MULTIPLIER: 0.1
+  MAX_ITER: 10000
+  LR_SCHEDULER_NAME: "WarmupMultiStepLR"
+  STEPS: (8000, 9000)
+  WARMUP_FACTOR: 0.1
+  WARMUP_ITERS: 500
+  CHECKPOINT_PERIOD: 1000
+  AMP:
+    ENABLED: True
+TEST:
+  EVAL_PERIOD: 1000
+OUTPUT_DIR: "output/tg_pansr/controls/swin_l_b1_baseline_continued"

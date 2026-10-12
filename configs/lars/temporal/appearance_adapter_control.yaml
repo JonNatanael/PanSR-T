@@ -1,0 +1,12 @@
+# B2 - added-capacity control: the SAME trainable fusion architecture and
+# schedule, but the geometric input is a constant zero tensor on the
+# target-derived lattice (no Pi3 call, no checkpoint).  This is a capacity
+# control, not a match for Pi3's frozen parameter count / pretraining /
+# compute.
+_BASE_: Base-TG.yaml
+TEMPORAL:
+  GEOMETRY:
+    CHECKPOINT: ""    # not needed: zero-geometry control
+  FUSION:
+    ZERO_GEOMETRY: True
+OUTPUT_DIR: "output/tg_pansr/controls/swin_l_b2_zero_geometry"
