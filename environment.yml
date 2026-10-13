@@ -8,7 +8,7 @@
 # Host prerequisites (NOT installable from this file):
 #   * CUDA 12.x toolkit (nvcc) and gcc on PATH
 #   * an NVIDIA GPU visible at build time (or set TORCH_CUDA_ARCH_LIST,
-#     e.g. export TORCH_CUDA_ARCH_LIST=8.6 for Ampere)
+#     e.g. export TORCH_CUDA_ARCH_LIST=8.0 for an NVIDIA A100)
 #
 # Usage (from the repo root, i.e. the directory containing this file):
 #

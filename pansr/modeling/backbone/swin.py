@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
-from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+from timm.layers import DropPath, to_2tuple, trunc_normal_
 
 from detectron2.modeling import BACKBONE_REGISTRY, Backbone, ShapeSpec
 
@@ -442,7 +442,11 @@ class BasicLayer(nn.Module):
         for blk in self.blocks:
             blk.H, blk.W = H, W
             if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x, attn_mask)
+                # Explicitly preserve the reentrant behavior used by older
+                # PyTorch releases and avoid the implicit-mode warning.
+                x = checkpoint.checkpoint(
+                    blk, x, attn_mask, use_reentrant=True
+                )
             else:
                 x = blk(x, attn_mask)
         if self.downsample is not None:

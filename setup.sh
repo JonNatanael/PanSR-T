@@ -85,7 +85,7 @@ PYEOF
   else
     echo "ERROR: no visible CUDA GPU to auto-detect compute capability from."
     echo "       Make a GPU visible (e.g. export CUDA_VISIBLE_DEVICES=0) or set the"
-    echo "       target arch explicitly (e.g. export TORCH_CUDA_ARCH_LIST=8.6 for Ampere),"
+    echo "       target arch explicitly (e.g. export TORCH_CUDA_ARCH_LIST=8.0 for an A100),"
     echo "       then re-run."
     exit 1
   fi

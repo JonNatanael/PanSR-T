@@ -9,7 +9,6 @@
 from typing import Optional, List, Union
 import torch
 from torch import nn, Tensor
-from torch.cuda.amp import autocast
 
 from ...utils.utils import MLP, _get_clones, _get_activation_fn, gen_sineembed_for_position, inverse_sigmoid
 from ..pixel_decoder.ops.modules import MSDeformAttn
@@ -217,7 +216,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
         tgt = self.norm3(tgt)
         return tgt
 
-    @autocast(enabled=False)
+    @torch.amp.autocast("cuda", enabled=False)
     def forward(self,
                 # for tgt
                 tgt: Optional[Tensor],  # nq, bs, d_model

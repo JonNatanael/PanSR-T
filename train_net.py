@@ -2,12 +2,23 @@
 # PanSR training script (LaRS panoptic segmentation).
 # Built on MaskDINO / Mask2Former training scripts (Apache-2.0).
 # ------------------------------------------------------------------------
+import warnings
+
 try:
     from shapely.errors import ShapelyDeprecationWarning
-    import warnings
     warnings.filterwarnings('ignore', category=ShapelyDeprecationWarning)
 except Exception:
     pass
+
+# PyTorch 2.4's checkpoint implementation still calls the deprecated CPU AMP
+# spelling internally.  Keep this filter deliberately narrow so other future
+# compatibility warnings remain visible.
+warnings.filterwarnings(
+    "ignore",
+    message=r".*torch\.cpu\.amp\.autocast.*is deprecated.*",
+    category=FutureWarning,
+    module=r"torch\.utils\.checkpoint",
+)
 
 import logging
 import os

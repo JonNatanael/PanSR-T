@@ -15,7 +15,6 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.nn.init import xavier_uniform_, constant_, uniform_, normal_
-from torch.cuda.amp import autocast
 
 from detectron2.config import configurable
 from detectron2.layers import Conv2d, ShapeSpec, get_norm
@@ -361,7 +360,7 @@ class PanSREncoder(nn.Module):
         ret["feature_order"] = cfg.MODEL.SEM_SEG_HEAD.FEATURE_ORDER
         return ret
 
-    @autocast(enabled=False)
+    @torch.amp.autocast("cuda", enabled=False)
     def forward_features(self, features, masks):
         """
         :param features: multi-scale features from the backbone
@@ -428,4 +427,3 @@ class PanSREncoder(nn.Module):
                 multi_scale_features.append(o)
                 num_cur_levels += 1
         return self.mask_features(out[-1]), out[0], multi_scale_features
-

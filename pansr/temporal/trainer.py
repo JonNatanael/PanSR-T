@@ -189,13 +189,11 @@ class _AccumulatingAMPTrainer(AMPTrainer):
     def run_step(self):
         assert self.model.training, "[_AccumulatingAMPTrainer] model in eval mode!"
         assert torch.cuda.is_available(), "AMP requires CUDA"
-        from torch.cuda.amp import autocast
-
         start = time.perf_counter()
         n = self.accumulation_steps
         self.optimizer.zero_grad()
         loss_dict_acc: Dict[str, torch.Tensor] = {}
-        with autocast(dtype=self.precision):
+        with torch.amp.autocast("cuda", dtype=self.precision):
             for _ in range(n):
                 data = next(self._data_loader_iter)
                 loss_dict = self.model(data)

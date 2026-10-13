@@ -28,7 +28,7 @@ bash setup.sh
 
 `setup.sh` is configurable via env vars (`TORCH_VERSION`, `TORCHVISION_VERSION`, `TORCH_CUDA_INDEX`,
 `TORCH_CUDA_ARCH_LIST`). By default the GPU compute capability is auto-detected from the visible GPU
-at build time; set `TORCH_CUDA_ARCH_LIST` (e.g. `8.6` for Ampere) to target a specific architecture,
+at build time; set `TORCH_CUDA_ARCH_LIST` (e.g. `8.0` for an NVIDIA A100) to target a specific architecture,
 which is useful when building on a machine whose GPU differs from the deployment target.
 
 ### Manual installation
@@ -51,7 +51,7 @@ pip install -e .
 
 # 4. Build the MultiScaleDeformableAttention CUDA op.
 #    PyTorch auto-detects the arch from the visible GPU; if no GPU is visible at
-#    build time, pin it (e.g. export TORCH_CUDA_ARCH_LIST=8.6 for Ampere) to avoid
+#    build time, pin it (e.g. export TORCH_CUDA_ARCH_LIST=8.0 for an NVIDIA A100) to avoid
 #    an "IndexError: list index out of range" from torch's build system.
 export FORCE_CUDA=1
 ( cd pansr/modeling/pixel_decoder/ops && python setup.py build install )
@@ -67,7 +67,7 @@ python -c "import torch, detectron2, MultiScaleDeformableAttention, pansr; print
 >   (e.g. `torch==2.1.2` + the matching detectron2 wheel) and re-run step 4.
 > - `IndexError: list index out of range` from `torch/utils/cpp_extension.py` during a CUDA build
 >   means no GPU was visible to auto-detect the arch — set `CUDA_VISIBLE_DEVICES` or pin
->   `TORCH_CUDA_ARCH_LIST` (e.g. `8.6`), then re-run.
+>   `TORCH_CUDA_ARCH_LIST` (e.g. `8.0` for an NVIDIA A100), then re-run.
 > - If `torch.cuda.is_available()` is `False` despite GPUs being present, set `CUDA_VISIBLE_DEVICES`.
 
 Point the code at your LaRS dataset (used for training, evaluation, and inference metadata):
