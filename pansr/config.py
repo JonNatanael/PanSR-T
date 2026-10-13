@@ -52,6 +52,11 @@ def add_pansr_config(cfg):
     # optimizer
     cfg.SOLVER.OPTIMIZER = "ADAMW"
     cfg.SOLVER.BACKBONE_MULTIPLIER = 0.1
+    # Optional gradient accumulation: one optimizer update per
+    # ACCUMULATION_STEPS data batches (losses averaged).  Lets a memory-
+    # limited GPU recover an effective batch size with a smaller per-step
+    # micro-batch.  1 (default) = standard detectron2 behavior.
+    cfg.SOLVER.ACCUMULATION_STEPS = 1
 
     # PanSR model config
     cfg.MODEL.PanSR = CN()

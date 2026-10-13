@@ -201,5 +201,7 @@ def load_model_weights(model, cfg, resume: bool = True):
         return None
     if weights.endswith(".safetensors"):
         return load_initial_weights(model, weights)
-    checkpointer.load(weights)
-    return None
+    # External .pth: validated model-weights-only load (same reasoning as
+    # Trainer.resume_or_load: the stored optimizer state belongs to the old
+    # training run and has an incompatible parameter-group layout).
+    return load_initial_weights(model, weights)

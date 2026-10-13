@@ -81,7 +81,7 @@ class Trainer(DefaultTrainer):
         """Like d2's, but supports .safetensors initial weights (d2 0.6's
         checkpointer only reads .pth).  Local resume always goes through
         the checkpointer."""
-        from .checkpoint_utils import load_model_weights
+        from .checkpoint_utils import load_initial_weights, load_model_weights
 
         weights = self.cfg.MODEL.WEIGHTS
         local_last = os.path.join(self.cfg.OUTPUT_DIR, "last_checkpoint")
@@ -91,7 +91,14 @@ class Trainer(DefaultTrainer):
         elif weights and weights.endswith(".safetensors"):
             report = load_model_weights(self.model, self.cfg, resume=resume)
         elif weights:
-            self.checkpointer.load(weights)
+            # External .pth initial weights: validated model-weights-only load.
+            # checkpointer.load() would also restore the optimizer/scheduler/
+            # GradScaler state stored in the checkpoint, which is unwanted for
+            # initial weights and fails outright when the checkpoint was written
+            # by an older code revision with a different optimizer parameter-
+            # group layout (the released LaRS checkpoints use 897 per-param
+            # groups; the current code groups params differently).
+            report = load_initial_weights(self.model, weights)
         else:
             logger.info("MODEL.WEIGHTS is empty; starting from random initialization")
         if resume and self.checkpointer.has_checkpoint():
@@ -104,7 +111,23 @@ class Trainer(DefaultTrainer):
 
     def _build_inner_trainer(self, cfg, model, data_loader, optimizer):
         """Build the per-step trainer (overridable; vanilla returns the
-        standard d2 AMP/Simple trainer)."""
+        standard d2 AMP/Simple trainer, or the gradient-accumulating
+        variants when SOLVER.ACCUMULATION_STEPS > 1 — one optimizer update
+        per ACCUMULATION_STEPS data batches, same semantics as the temporal
+        trainer)."""
+        accum = int(cfg.SOLVER.ACCUMULATION_STEPS)
+        if accum > 1:
+            # Lazy import: pansr.temporal.trainer imports pansr.trainer, so a
+            # module-level import here would be circular.
+            from pansr.temporal.trainer import (
+                _AccumulatingAMPTrainer,
+                _AccumulatingSimpleTrainer,
+            )
+            if cfg.SOLVER.AMP.ENABLED:
+                return _AccumulatingAMPTrainer(
+                    model, data_loader, optimizer, accumulation_steps=accum)
+            return _AccumulatingSimpleTrainer(
+                model, data_loader, optimizer, accumulation_steps=accum)
         return (AMPTrainer if cfg.SOLVER.AMP.ENABLED else SimpleTrainer)(
             model, data_loader, optimizer
         )

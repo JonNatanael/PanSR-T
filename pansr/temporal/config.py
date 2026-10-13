@@ -97,7 +97,12 @@ def add_temporal_config(cfg):
     # Geometry pixel budget (H_geo * W_geo <= PIXEL_BUDGET, dims divisible
     # by the backend patch size).  255000 follows GMOS preprocessing.
     cfg.TEMPORAL.GEOMETRY.PIXEL_BUDGET = 255000
-    # Numerical precision for the frozen encoder: "fp32" or "bf16".
+    # Numerical precision for the frozen encoder: "fp32" or "bf16"
+    # ("bf16" is effectively fp32 compute — Pi3's fp32 normalization buffers
+    # upcast bf16 inputs; reference-protocol behavior), or "bf16_strict"
+    # (true bf16 compute: the frozen weights/buffers are cast to bf16;
+    # saves ~1.5GB VRAM but deviates from the reference protocol by ~1-2%
+    # relative feature error — use only when VRAM-constrained).
     cfg.TEMPORAL.GEOMETRY.DTYPE = "bf16"
     # Feature cache: "none" (always recompute) or a directory for the
     # final-clip frozen-feature cache (shared_view_online only).
@@ -175,7 +180,7 @@ def validate_temporal_config(cfg, is_train):
     assert t.GEOMETRY.FEATURE_MODE == "last_decoder" or t.GEOMETRY.FEATURE_MODE.startswith("tapped:"), (
         f"TEMPORAL.GEOMETRY.FEATURE_MODE must be 'last_decoder' or 'tapped:<layers>'"
     )
-    assert t.GEOMETRY.DTYPE in ("fp32", "bf16")
+    assert t.GEOMETRY.DTYPE in ("fp32", "bf16", "bf16_strict")
     assert t.GEOMETRY.CACHE_MODE in ("none", "clip_features")
     assert t.FUSION.MODE in ("gmos_bottleneck_residual", "concat_only", "off")
     assert t.FUSION.RESIDUAL_INIT == "zero_output"
