@@ -67,10 +67,12 @@ class TemporalPanSR(PanSR):
 
         zero_geometry = bool(f.ZERO_GEOMETRY)
         geometry_encoder = None
-        if t.ENABLED and not zero_geometry:
+        uses_canonical_cache = t.PREPROCESS_MODE == "canonical_full_frame_cache"
+        if t.ENABLED and not zero_geometry and not uses_canonical_cache:
             geometry_encoder = build_geometry_encoder(cfg)
         geo_channels = int(t.GEOMETRY.FEATURE_WIDTH)
-        if t.ENABLED and geometry_encoder is None and not zero_geometry:
+        if (t.ENABLED and geometry_encoder is None and not zero_geometry
+                and not uses_canonical_cache):
             raise GeometryEncoderError(
                 "TEMPORAL.ENABLED=True with no geometry encoder and no "
                 "ZERO_GEOMETRY control: misconfiguration"
@@ -146,8 +148,10 @@ class TemporalPanSR(PanSR):
         fused_levels: Dict[int, Dict[str, torch.Tensor]] = {}
         for b in range(len(image_sizes)):
             bi = batched_inputs[b]
-            if "clip_rgb" not in bi or bi["clip_rgb"] is None:
-                self._fallback(bi, reason="no clip in batch input")
+            has_online = bi.get("clip_rgb") is not None
+            has_cached = bi.get("geometry_features") is not None
+            if not has_online and not has_cached and not self.zero_geometry:
+                self._fallback(bi, reason="no online clip or cached geometry in batch input")
                 continue
             try:
                 per, grid_info = self._per_sample_fusion(b, features, image_sizes[b], bi)
@@ -221,6 +225,23 @@ class TemporalPanSR(PanSR):
             # capacity control B2: features materialized on the target-
             # derived lattice in _per_sample_fusion (with the correct device).
             return None, geo_grid
+
+        cached = bi.get("geometry_features")
+        if cached is not None:
+            if cached.ndim != 3:
+                raise GeometryEncoderError(
+                    f"cached geometry must be [C,h,w], got {tuple(cached.shape)}"
+                )
+            if tuple(cached.shape[-2:]) != (ph, pw):
+                raise GeometryEncoderError(
+                    f"cached geometry grid {tuple(cached.shape[-2:])} != expected {(ph, pw)}"
+                )
+            if cached.shape[0] != self.temporal_fusion.geo_channels:
+                raise GeometryEncoderError(
+                    f"cached geometry width {cached.shape[0]} != expected "
+                    f"{self.temporal_fusion.geo_channels}"
+                )
+            return cached.to(self.device, non_blocking=True), geo_grid
 
         # the train/val loaders deliver CPU batches; move the clip to the
         # model device exactly like the image/instance branches do

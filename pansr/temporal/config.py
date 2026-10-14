@@ -104,8 +104,7 @@ def add_temporal_config(cfg):
     # saves ~1.5GB VRAM but deviates from the reference protocol by ~1-2%
     # relative feature error — use only when VRAM-constrained).
     cfg.TEMPORAL.GEOMETRY.DTYPE = "bf16"
-    # Feature cache: "none" (always recompute) or a directory for the
-    # final-clip frozen-feature cache (shared_view_online only).
+    # Feature cache: canonical_full_frame_cache requires "clip_features".
     cfg.TEMPORAL.GEOMETRY.CACHE_MODE = "none"
     cfg.TEMPORAL.GEOMETRY.CACHE_DIR = ""
 
@@ -197,9 +196,22 @@ def validate_temporal_config(cfg, is_train):
         else:
             assert t.MANIFEST_VAL, "TEMPORAL.ENABLED=True requires TEMPORAL.MANIFEST_VAL"
         if t.PREPROCESS_MODE == "canonical_full_frame_cache":
+            assert t.GEOMETRY.CACHE_MODE == "clip_features", (
+                "TEMPORAL.PREPROCESS_MODE='canonical_full_frame_cache' requires "
+                "TEMPORAL.GEOMETRY.CACHE_MODE='clip_features'"
+            )
             assert t.GEOMETRY.CACHE_DIR, (
                 "TEMPORAL.PREPROCESS_MODE='canonical_full_frame_cache' requires "
                 "TEMPORAL.GEOMETRY.CACHE_DIR with pre-extracted features"
+            )
+            assert t.FRAME_DROPOUT == 0.0, (
+                "canonical_full_frame_cache requires TEMPORAL.FRAME_DROPOUT=0; "
+                "offline features encode one fixed selected clip"
+            )
+        elif t.GEOMETRY.CACHE_MODE == "clip_features":
+            raise AssertionError(
+                "CACHE_MODE='clip_features' is the offline canonical cache; set "
+                "TEMPORAL.PREPROCESS_MODE='canonical_full_frame_cache'"
             )
         # 'target_only' still runs the geometric branch with a single frame;
         # it must not silently become the vanilla baseline.

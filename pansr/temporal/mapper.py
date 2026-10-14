@@ -3,10 +3,10 @@
 #
 # The target frame is processed *exactly* like the original PanSR mapper
 # (same transform sampling, same instance construction), but the sampled
-# transform list is also applied to every context frame so the whole clip
-# is spatially consistent.  The clip is then resized to the geometry
-# raster (aspect-preserving, dims divisible by the Pi3 patch size, within
-# the pixel budget) and handed to the model as a float RGB [0, 1] tensor.
+# transform list is also applied to every context frame in online mode so
+# the whole clip is spatially consistent.  In canonical-cache mode, the
+# mapper instead loads deterministic full-frame Pi3 features and records
+# the affine needed to map them into the sampled target view.
 #
 # No Pi3 / CUDA work happens here: workers only decode and transform.
 # ------------------------------------------------------------------------
@@ -26,6 +26,7 @@ from detectron2.data import transforms as T
 from detectron2.structures import BitMasks, Boxes, Instances
 
 from . import alignment
+from .cache import GeometryFeatureCache, content_fingerprint
 from .manifest import ManifestError, select_frames
 
 logger = logging.getLogger(__name__)
@@ -118,7 +119,13 @@ class TemporalCOCOPanopticDatasetMapper:
                  frame_dropout: float = 0.0,
                  sampling: str = "all_history",
                  num_frames: int = 10,
-                 seed: int = 0):
+                 seed: int = 0,
+                 cache_mode: str = "none",
+                 cache_dir: str = "",
+                 geometry_checkpoint: str = "",
+                 feature_mode: str = "last_decoder",
+                 geometry_dtype: str = "bf16",
+                 feature_width: int = 1024):
         self.tfm_gens = tfm_gens
         self.img_format = image_format
         self.is_train = is_train
@@ -130,6 +137,16 @@ class TemporalCOCOPanopticDatasetMapper:
         self.sampling = sampling
         self.num_frames = int(num_frames)
         self.seed = int(seed)
+        self.cache_mode = cache_mode
+        self.cache_dir = os.path.abspath(os.path.expanduser(cache_dir)) if cache_dir else ""
+        self.feature_mode = feature_mode
+        self.geometry_dtype = geometry_dtype
+        self.feature_width = int(feature_width)
+        self.checkpoint_sha256 = (
+            content_fingerprint(os.path.expanduser(geometry_checkpoint))
+            if self.preprocess_mode == "canonical_full_frame_cache" else ""
+        )
+        self._caches: Dict[str, GeometryFeatureCache] = {}
 
     @classmethod
     def from_config(cls, cfg, is_train: bool = True):
@@ -151,6 +168,12 @@ class TemporalCOCOPanopticDatasetMapper:
             "sampling": t.SAMPLING,
             "num_frames": t.NUM_FRAMES,
             "seed": t.SAMPLING_SEED,
+            "cache_mode": t.GEOMETRY.CACHE_MODE,
+            "cache_dir": t.GEOMETRY.CACHE_DIR,
+            "geometry_checkpoint": t.GEOMETRY.CHECKPOINT,
+            "feature_mode": t.GEOMETRY.FEATURE_MODE,
+            "geometry_dtype": t.GEOMETRY.DTYPE,
+            "feature_width": t.GEOMETRY.FEATURE_WIDTH,
         }
 
     # ------------------------------------------------------------------
@@ -247,32 +270,6 @@ class TemporalCOCOPanopticDatasetMapper:
             chosen = sorted([i for i in keep if i != target_index],
                             key=lambda i: ranks[i]) + [target_index]
 
-        context_images: List[np.ndarray] = []
-        missing = []
-        raw_clip = dataset_dict.get("_raw_clip_arrays")
-        for i in chosen:
-            if i == target_index:
-                context_images.append(image)  # already transformed
-                continue
-            if raw_clip is not None:
-                ctx_img = np.asarray(raw_clip[i])
-            else:
-                if clip_paths is None:
-                    raise ManifestError("clip_frames paths missing for file loading")
-                path = clip_paths[i]
-                if not os.path.isfile(path):
-                    if self.missing_policy == "error":
-                        raise ManifestError(f"context frame missing: {path}")
-                    missing.append(path)
-                    continue
-                ctx_img = utils.read_image(path, format=self.img_format)
-            if tuple(ctx_img.shape[:2]) != orig_hw:
-                raise ManifestError(
-                    f"context frame {clip_frame_ids[i]} has size {ctx_img.shape[:2]} but "
-                    f"target has size {orig_hw}; clips must be resolution-consistent"
-                )
-            context_images.append(transforms.apply_image(ctx_img))
-
         # chronological ordering of the selected clip (target keeps its
         # verified position; repeated targets collapse to one position)
         ordered_idx: List[int] = []
@@ -282,24 +279,80 @@ class TemporalCOCOPanopticDatasetMapper:
             ordered_idx = chosen  # already chronological (target last for causal clips)
 
         # ---- geometry raster --------------------------------------------
-        geo_hw = alignment.resize_geometry_size(crop_hw, self.pixel_budget, self.patch_size)
-        geo_scale = (geo_hw[1] / crop_hw[1], geo_hw[0] / crop_hw[0])  # (sx, sy)
-        # original -> crop raster (crop_affine) first, then crop raster ->
-        # geo raster (resize); compose applies the receiver first.
-        geo_affine = crop_affine.compose(
-            alignment.PixelAffine.resize(crop_hw, geo_hw)
-        )
+        frame_ids_out: List[str] = [clip_frame_ids[i] for i in ordered_idx]
+        missing = []
+        clip_rgb_tensor = None
+        cached_features = None
 
-        # context_images is indexed by load order, which equals `chosen`
-        # order; map each ordered position back to its loaded array.
-        load_pos = {i: k for k, i in enumerate(chosen)}
-        clip_rgb = np.empty((len(ordered_idx), 3, geo_hw[0], geo_hw[1]), dtype=np.float32)
-        frame_ids_out: List[str] = []
-        for k, i in enumerate(ordered_idx):
-            rgb = self._to_rgb(context_images[load_pos[i]])
-            small = cv2.resize(rgb, (geo_hw[1], geo_hw[0]), interpolation=cv2.INTER_LINEAR)
-            clip_rgb[k] = small.astype(np.float32).transpose(2, 0, 1) / 255.0
-            frame_ids_out.append(clip_frame_ids[i])
+        if self.preprocess_mode == "canonical_full_frame_cache":
+            # Canonical Pi3 features live on a deterministic resize of the
+            # raw full frame, before any LSJ crop/flip.  The two affines below
+            # let alignment.py map that grid into this iteration's view.
+            geo_hw = alignment.resize_geometry_size(orig_hw, self.pixel_budget, self.patch_size)
+            geo_affine = alignment.PixelAffine.resize(orig_hw, geo_hw)
+            geo_scale = (geo_hw[1] / orig_hw[1], geo_hw[0] / orig_hw[0])
+            cache = self._cache_for_split(str(dataset_dict.get("split") or "unknown"))
+            key = GeometryFeatureCache.make_canonical_key(
+                checkpoint_sha256=self.checkpoint_sha256,
+                feature_mode=self.feature_mode,
+                requested_dtype=self.geometry_dtype,
+                pixel_budget=self.pixel_budget,
+                frame_ids=frame_ids_out,
+                target_index=int(ordered_idx.index(target_index)),
+            )
+            cached_features, meta = cache.get_with_metadata(key)
+            if cached_features is None:
+                message = (
+                    f"canonical Pi3 cache miss for image_id={dataset_dict.get('image_id')} "
+                    f"(key={key}, cache={cache._dir}); run tools/temporal/extract_geometry.py "
+                    "with the same checkpoint, dtype, pixel budget, and sampling settings"
+                )
+                if self.missing_policy == "error":
+                    raise ManifestError(message)
+                logger.warning(message)
+            else:
+                self._validate_cached_entry(
+                    cached_features, meta, orig_hw, geo_hw, frame_ids_out,
+                    int(ordered_idx.index(target_index)),
+                )
+        else:
+            context_images: List[np.ndarray] = []
+            raw_clip = dataset_dict.get("_raw_clip_arrays")
+            for i in chosen:
+                if i == target_index:
+                    context_images.append(image)  # already transformed
+                    continue
+                if raw_clip is not None:
+                    ctx_img = np.asarray(raw_clip[i])
+                else:
+                    if clip_paths is None:
+                        raise ManifestError("clip_frames paths missing for file loading")
+                    path = clip_paths[i]
+                    if not os.path.isfile(path):
+                        if self.missing_policy == "error":
+                            raise ManifestError(f"context frame missing: {path}")
+                        missing.append(path)
+                        continue
+                    ctx_img = utils.read_image(path, format=self.img_format)
+                if tuple(ctx_img.shape[:2]) != orig_hw:
+                    raise ManifestError(
+                        f"context frame {clip_frame_ids[i]} has size {ctx_img.shape[:2]} but "
+                        f"target has size {orig_hw}; clips must be resolution-consistent"
+                    )
+                context_images.append(transforms.apply_image(ctx_img))
+
+            geo_hw = alignment.resize_geometry_size(crop_hw, self.pixel_budget, self.patch_size)
+            geo_scale = (geo_hw[1] / crop_hw[1], geo_hw[0] / crop_hw[0])
+            geo_affine = crop_affine.compose(alignment.PixelAffine.resize(crop_hw, geo_hw))
+            load_pos = {i: k for k, i in enumerate(chosen)}
+            clip_rgb = np.empty(
+                (len(ordered_idx), 3, geo_hw[0], geo_hw[1]), dtype=np.float32
+            )
+            for k, i in enumerate(ordered_idx):
+                rgb = self._to_rgb(context_images[load_pos[i]])
+                small = cv2.resize(rgb, (geo_hw[1], geo_hw[0]), interpolation=cv2.INTER_LINEAR)
+                clip_rgb[k] = small.astype(np.float32).transpose(2, 0, 1) / 255.0
+            clip_rgb_tensor = torch.from_numpy(np.ascontiguousarray(clip_rgb))
 
         # ---- record everything the model needs ---------------------------
         out = {
@@ -313,7 +366,6 @@ class TemporalCOCOPanopticDatasetMapper:
             "clip_manifest_id": dataset_dict.get("clip_manifest_id"),
             "sequence_id": dataset_dict.get("sequence_id"),
             "split": dataset_dict.get("split"),
-            "clip_rgb": torch.from_numpy(np.ascontiguousarray(clip_rgb)),
             "target_index": int(ordered_idx.index(target_index)),
             "frame_ids": frame_ids_out,
             "clip_full_frame_ids": clip_frame_ids,
@@ -329,11 +381,59 @@ class TemporalCOCOPanopticDatasetMapper:
                 "transform_summary": " -> ".join(type(t).__name__ for t in transforms),
             },
         }
+        if clip_rgb_tensor is not None:
+            out["clip_rgb"] = clip_rgb_tensor
+        if cached_features is not None:
+            out["geometry_features"] = cached_features
         if self.is_train and "instances" in dataset_dict:
             out["instances"] = dataset_dict["instances"]
         if missing:
             out["missing_context_frames"] = missing
         return out
+
+    def _cache_for_split(self, split: str) -> GeometryFeatureCache:
+        if split not in self._caches:
+            self._caches[split] = GeometryFeatureCache(
+                self.cache_dir, split, read_write=False
+            )
+        return self._caches[split]
+
+    def _validate_cached_entry(
+        self, features, meta, original_hw, geo_hw, frame_ids, target_index
+    ) -> None:
+        expected_grid = (geo_hw[0] // self.patch_size, geo_hw[1] // self.patch_size)
+        if features.ndim != 3 or features.shape[0] != self.feature_width:
+            raise ManifestError(
+                f"invalid cached Pi3 feature shape {tuple(features.shape)}; expected "
+                f"[{self.feature_width},h,w]"
+            )
+        if tuple(features.shape[-2:]) != expected_grid:
+            raise ManifestError(
+                f"cached Pi3 grid {tuple(features.shape[-2:])} != expected {expected_grid}"
+            )
+        if meta.get("protocol") != "canonical_full_frame_cache":
+            raise ManifestError("cache entry is not canonical_full_frame_cache data")
+        if list(meta.get("frame_ids", [])) != list(frame_ids):
+            raise ManifestError("cached Pi3 frame IDs do not match the selected clip")
+        if int(meta.get("target_index", -1)) != int(target_index):
+            raise ManifestError("cached Pi3 target index does not match the selected clip")
+        if list(meta.get("original_hw", [])) != list(original_hw):
+            raise ManifestError("cached Pi3 original frame size does not match this record")
+        if list(meta.get("canonical_geo_hw", [])) != list(geo_hw):
+            raise ManifestError("cached Pi3 canonical raster does not match this dataset record")
+        expected = {
+            "checkpoint_sha256": self.checkpoint_sha256,
+            "feature_mode": self.feature_mode,
+            "requested_dtype": self.geometry_dtype,
+            "pixel_budget": self.pixel_budget,
+            "feature_width": self.feature_width,
+        }
+        for field, value in expected.items():
+            if meta.get(field) != value:
+                raise ManifestError(
+                    f"cached Pi3 metadata mismatch for {field}: "
+                    f"found {meta.get(field)!r}, expected {value!r}"
+                )
 
     # ------------------------------------------------------------------
     def _to_rgb(self, arr: np.ndarray) -> np.ndarray:

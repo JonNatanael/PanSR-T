@@ -248,6 +248,25 @@ CUDA_VISIBLE_DEVICES=1 $PY tools/temporal/extract_geometry.py \
     --pixel-budget 65000 --slicing recent --num-frames 8
 ```
 
+Extract every split that will be used (normally both train and val), using
+the same `PIXEL_BUDGET`, `SAMPLING`, `NUM_FRAMES`, `FEATURE_MODE`, and
+`DTYPE` as training. Extraction is resumable: existing compatible entries
+are skipped unless `--overwrite` is passed. Then enable the cache with:
+
+```yaml
+TEMPORAL:
+  PREPROCESS_MODE: "canonical_full_frame_cache"
+  FRAME_DROPOUT: 0.0
+  GEOMETRY:
+    CACHE_MODE: "clip_features"
+    CACHE_DIR: "pi3_cache"
+```
+
+In this mode data workers load the target-frame Pi3 tensor and the model
+does not construct or run Pi3. Random target augmentation still happens;
+the cached full-frame feature grid is mapped into the sampled crop/flip by
+the recorded original-to-canonical and original-to-augmented affines.
+
 Profiling (synchronized GPU timing per branch + memory) and experiment
 comparison:
 

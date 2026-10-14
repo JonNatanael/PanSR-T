@@ -1,9 +1,9 @@
 # ------------------------------------------------------------------------
-# TG-PanSR: frozen final-clip geometry feature cache.
+# TG-PanSR: frozen geometry feature cache.
 #
-# The cache stores *outputs of the frozen Pi3 encoder* for one specific
-# joint clip and preprocessing operation (brief section 10.1).  The key
-# covers everything that can change the result:
+# The cache stores *outputs of the frozen Pi3 encoder*.  Online keys cover
+# one specific joint clip and preprocessing operation; canonical keys cover
+# deterministic raw-full-frame extraction before training augmentation.
 #
 #   * cache schema version
 #   * model/checkpoint sha256 + feature mode + dtype
@@ -84,33 +84,71 @@ class GeometryFeatureCache:
         blob = json.dumps(payload, sort_keys=True).encode("utf-8")
         return hashlib.sha256(blob).hexdigest()
 
+    @staticmethod
+    def make_canonical_key(
+        *,
+        checkpoint_sha256: str,
+        feature_mode: str,
+        requested_dtype: str,
+        pixel_budget: int,
+        frame_ids: Any,
+        target_index: int,
+    ) -> str:
+        """Return the stable lookup key for an offline full-frame clip.
+
+        Unlike :meth:`make_key`, this deliberately has no augmentation in
+        the key: canonical features are extracted before random training
+        transforms and are mapped into each sampled view at load time.
+        """
+        payload = {
+            "schema": CACHE_SCHEMA_VERSION,
+            "protocol": "canonical_full_frame_cache",
+            "checkpoint_sha256": str(checkpoint_sha256),
+            "feature_mode": str(feature_mode),
+            "requested_dtype": str(requested_dtype),
+            "pixel_budget": int(pixel_budget),
+            "frame_ids": list(frame_ids),
+            "target_index": int(target_index),
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+
     # ------------------------------------------------------------------
     def _path(self, key: str):
         return os.path.join(self._dir, key + ".npz")
 
-    def get(self, key: str) -> Optional[torch.Tensor]:
+    def get_with_metadata(self, key: str):
         path = self._path(key)
         if not os.path.isfile(path):
             self.misses += 1
-            return None
+            return None, None
         try:
-            npz = np.load(path)
-            if int(npz["schema"]) != CACHE_SCHEMA_VERSION:
-                raise GeometryCacheMiss(f"stale schema in {path}")
-            arr = npz["features"]
-            meta = json.loads(npz["metadata"].item())
-            if tuple(arr.shape) != tuple(meta["shape"]):
-                raise GeometryCacheMiss(f"shape mismatch in {path}")
+            with np.load(path, allow_pickle=False) as npz:
+                if int(npz["schema"]) != CACHE_SCHEMA_VERSION:
+                    raise GeometryCacheMiss(f"stale schema in {path}")
+                arr = npz["features"]
+                raw_meta = npz["metadata"].item()
+                if isinstance(raw_meta, bytes):
+                    raw_meta = raw_meta.decode("utf-8")
+                meta = json.loads(raw_meta)
+                if tuple(arr.shape) != tuple(meta["shape"]):
+                    raise GeometryCacheMiss(f"shape mismatch in {path}")
+                tensor = torch.from_numpy(arr.astype(np.float32))
             self.hits += 1
-            return torch.from_numpy(arr.astype(np.float32))
+            return tensor, meta
         except GeometryCacheMiss as e:
             logger.warning("geometry cache: %s", e)
             self.misses += 1
-            return None
+            return None, None
         except Exception as e:  # corrupt entry
             logger.warning("geometry cache: corrupt entry %s (%s); treating as miss", path, e)
             self.misses += 1
-            return None
+            return None, None
+
+    def get(self, key: str) -> Optional[torch.Tensor]:
+        features, _ = self.get_with_metadata(key)
+        return features
 
     def put(self, key: str, features: torch.Tensor, metadata: Dict[str, Any]) -> None:
         if not self.read_write:
