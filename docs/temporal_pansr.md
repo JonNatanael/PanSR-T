@@ -237,6 +237,26 @@ CUDA_VISIBLE_DEVICES=1 $PY tools/temporal/export_lars.py \
     --lars-root "$LARS_ROOT" --output-dir output/lars_export --limit 198
 ```
 
+Leaderboard test export (defaults to the checkpoint named by
+`MODEL_DIR/last_checkpoint`, validates every RGB PNG, and creates a ZIP with
+the PNGs directly at its root):
+
+```bash
+$PY tools/temporal/build_manifest.py --lars-root "$LARS_ROOT" \
+    --split test --output test.jsonl
+CUDA_VISIBLE_DEVICES=0 $PY infer_lars_test.py \
+    output/tg_pansr/swin_l_t10_full_frame_cached \
+    --lars-root "$LARS_ROOT" --manifest test.jsonl \
+    --geometry-checkpoint "$PI3_CKPT" --gmos-root "$GMOS_ROOT"
+```
+
+Pass `--checkpoint model_0007999.pth` to select a non-last checkpoint.  Cache
+mode is `auto`: a complete compatible `test/` Pi3 cache is used when present;
+otherwise inference runs Pi3 online.  Use `--cache require` to forbid online
+fallback, or precompute the test cache with `extract_geometry.py` and the test
+manifest using the same sampling, frame count, pixel budget, feature mode, and
+dtype as the trained config.
+
 Offline canonical geometry cache (§10.2 protocol; NOT equivalent to
 online shared-view geometry — a separate documented mode):
 

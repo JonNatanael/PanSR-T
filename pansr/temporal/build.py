@@ -242,6 +242,113 @@ def build_manifest_for_split(
     return records, report
 
 
+def build_manifest_for_test(
+    lars_root: str,
+    clip_context: int = CLIP_CONTEXT_FRAMES,
+    strict: bool = True,
+) -> Tuple[List[Dict[str, Any]], BuildReport]:
+    """Build the unlabeled test manifest from the official test image list.
+
+    Unlike train/val, LaRS test has no public panoptic annotation JSON.  The
+    distribution does provide ``test/image_list.txt`` and, in recent
+    releases, ``test/image_annotations.json`` with stable image IDs.  Image
+    dimensions are read from the JPEG headers.  Context discovery and all
+    consecutiveness checks are identical to the labeled split builder.
+    """
+    from PIL import Image
+
+    split = "test"
+    image_dir = os.path.join(lars_root, split, "images")
+    list_path = os.path.join(lars_root, split, "image_list.txt")
+    if not os.path.isdir(image_dir):
+        raise ManifestError(f"test image directory not found: {image_dir}")
+
+    if os.path.isfile(list_path):
+        with open(list_path) as f:
+            names = [line.strip() for line in f if line.strip()]
+        names = [n if os.path.splitext(n)[1] else n + ".jpg" for n in names]
+    else:
+        names = sorted(
+            n for n in os.listdir(image_dir)
+            if os.path.splitext(n)[1].lower() in (".jpg", ".jpeg", ".png")
+        )
+    if not names:
+        raise ManifestError(f"no test images found in {image_dir}")
+
+    id_by_name: Dict[str, Any] = {}
+    sidecar = os.path.join(lars_root, split, "image_annotations.json")
+    if os.path.isfile(sidecar):
+        with open(sidecar) as f:
+            data = json.load(f)
+        for item in data.get("annotations", data.get("images", [])):
+            id_by_name[item["file_name"]] = item["id"]
+
+    seq_dir = _seq_dir(lars_root, split)
+    seq_frames = _list_seq_video_frames(seq_dir)
+    report = BuildReport(split=split, n_targets=len(names))
+    records: List[Dict[str, Any]] = []
+
+    for ordinal, fname in enumerate(names):
+        target_path = os.path.join(image_dir, fname)
+        if not os.path.isfile(target_path):
+            report.n_missing_frames += 1
+            report.missing.append(f"test target missing: {fname}")
+            if strict:
+                raise ManifestError(f"test target image missing: {target_path}")
+            continue
+
+        video, last = parse_frame_name(fname)
+        available = seq_frames.get(video, [])
+        first_avail = available[0] if available else last + 1
+        start = max(0, last - clip_context, first_avail)
+        need = list(range(start, last + 1))
+        missing = [fr for fr in need if fr not in set(available)]
+        if not available or missing:
+            report.n_missing_frames += 1
+            report.missing.append(f"{video}: missing frames {missing or [last]}")
+            if strict:
+                raise ManifestError(f"target {fname}: missing/non-consecutive context")
+            continue
+
+        with Image.open(target_path) as image:
+            width, height = image.size
+        frames = []
+        for fr in need:
+            is_target = fr == last
+            frames.append({
+                "file": os.path.join(split, "images", fname) if is_target else os.path.join(
+                    "lars_v1.0.0_images_seq", split, "images_seq",
+                    f"{video}_{fr:05d}.jpg",
+                ),
+                "frame_id": f"{video}_{fr:05d}",
+                "timestamp_seconds": None,
+                "relative_rank": fr - last,
+                "is_target": is_target,
+            })
+        rec: Dict[str, Any] = {
+            "schema_version": SCHEMA_VERSION,
+            "split": split,
+            "image_id": id_by_name.get(fname, ordinal),
+            "sequence_id": video,
+            "source_video_id": video,
+            "target_file": os.path.join(split, "images", fname),
+            "frames": frames,
+            "target_index": len(frames) - 1,
+            "original_height": height,
+            "original_width": width,
+        }
+        if len(frames) < clip_context + 1:
+            rec["history_truncated"] = True
+            rec["history_note"] = (
+                f"sequence archive starts at frame {need[0]}; target has "
+                f"{len(frames) - 1} verified preceding frames"
+            )
+        records.append(rec)
+        report.n_ok += 1
+
+    return records, report
+
+
 def split_overlap_report(lars_root: str, splits=("train", "val"),
                          annotation_file: str = "mmdet_annotations.json") -> Dict[str, Any]:
     """Check for suspicious cross-split raw-frame / source-video overlap."""
